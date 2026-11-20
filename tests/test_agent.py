@@ -2,6 +2,7 @@ import dataclasses
 import os
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 import contextlib
@@ -1005,9 +1006,21 @@ class PublicLogsTest(unittest.TestCase):
     def tearDown(self):
         redact.uninstall()
 
+    def test_derived_tokens_are_declared_to_github(self):
+        # Sur GitHub Actions, la valeur est aussi confiée au runner (commande add-mask, que
+        # GitHub retire lui-même du journal) : il la masque dans ce qui ne passe pas par Python.
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), contextlib.redirect_stdout(out):
+            redact.install({}, force=True)
+            redact.mask("jeton-renouvele-456")
+            print("jeton-renouvele-456")
+            redact.uninstall()
+        self.assertEqual(out.getvalue(), "::add-mask::jeton-renouvele-456\n***\n")
+
     def test_links_secrets_and_account_name_never_reach_the_log(self):
         out = io.StringIO()
-        with contextlib.redirect_stdout(out):
+        # Hors GitHub Actions : sur le runner, add-mask écrirait la valeur pour la confier à GitHub.
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": ""}), contextlib.redirect_stdout(out):
             self.assertTrue(redact.install({"BUFFER_API_KEY": "cle-buffer-123", "ACCOUNT_HANDLE": "@MonCompte",
                                             "OPENSHORTS_API_URL": "http://127.0.0.1:8000", "YOUTUBE_API_KEY": ""},
                                            force=True))
