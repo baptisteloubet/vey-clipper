@@ -9,6 +9,7 @@ name: Vey Clipper
 #
 # GitHub n'exécute les planifications que depuis la branche par défaut, et rien ne
 # tourne tant que les secrets manquent (voir « Lancement automatique » dans le README).
+# Dépôt recréé le 20/11/26 : ce fichier a été repoussé pour que GitHub réenregistre la planification.
 on:
   schedule:
     - cron: "17 * * * *"        # toutes les heures, nuit comprise : un live de minuit sort dans l'heure
