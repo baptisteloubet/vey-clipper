@@ -10,6 +10,7 @@ les adresses deviennent « [lien masqué] », les secrets et le nom du compte «
 Le filtre est posé sur GitHub Actions, ou partout avec CLIPPER_PUBLIC_LOGS=1 ; en
 local le journal reste lisible (drive-auth affiche une adresse à ouvrir).
 """
+import hashlib
 import os
 import re
 import sys
@@ -18,6 +19,9 @@ URL = re.compile(r"https?://[^\s\"'<>\\)\]}]+", re.IGNORECASE)
 # Paramètre sensible resté hors d'une adresse (corps de réponse, message d'erreur).
 PARAM = re.compile(r"((?:access_token|refresh_token|client_secret|api_?key|token|key)\s*[=:]\s*[\"']?)"
                    r"[A-Za-z0-9._~+/|-]{8,}", re.IGNORECASE)
+# Nom d'un clip dans Drive (date_note_streamer_titre) : le titre se retrouve dans la légende
+# publiée, donc sur le compte. Le journal garde un repère stable, pas le titre.
+CLIP = re.compile(r"\b\d{4}-\d{2}-\d{2}_note\d+_[^\s\"']+")
 LINK_MASK = "[lien masqué]"
 MASK = "***"
 MIN_LENGTH = 4          # en dessous, masquer une valeur abîmerait tout le journal
@@ -30,6 +34,12 @@ _raw = {}               # flux d'origine, pour parler à GitHub sans passer par 
 def public_logs(env=None):
     env = os.environ if env is None else env
     return env.get("GITHUB_ACTIONS") == "true" or env.get("CLIPPER_PUBLIC_LOGS") == "1"
+
+
+def quiet(text):
+    """Texte publié sur le compte (accroche, légende) : en journal public, sa longueur seulement."""
+    text = str(text or "")
+    return f"[texte masqué, {len(text)} caractères]" if "stdout" in _raw else text
 
 
 def mask(value):
@@ -54,6 +64,7 @@ def mask_name(value):
 def scrub(text):
     """Le texte tel qu'il peut être lu par tout le monde."""
     text = URL.sub(LINK_MASK, text)
+    text = CLIP.sub(lambda m: "clip-" + hashlib.sha1(m.group(0).encode()).hexdigest()[:8], text)
     text = PARAM.sub(lambda m: m.group(1) + MASK, text)
     for value in sorted(_values, key=len, reverse=True):
         text = text.replace(value, MASK)

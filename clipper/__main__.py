@@ -62,12 +62,12 @@ def trial(agent, limit=3):
             info = agent.state["clips"].get(clip.name) or {}
             source = {"channel": info.get("channel") or "le streamer"}
             print(f"   {clip.name[:70]}")
-            print(f"     avant : {hook}")
+            print(f"     avant : {redact.quiet(hook)}")
             try:
                 texts = agent.writer.rewrite({"title": title, "viral_hook_text": hook}, source, "",
                                              agent.cfg["theme"]["name"])
-                print(f"     après : {texts['hook']}")
-                print(f"             {texts['context']}")
+                print(f"     après : {redact.quiet(texts['hook'])}")
+                print(f"             {redact.quiet(texts['context'])}")
             except Exception as exc:
                 ok = False
                 print(f"     ÉCHEC : {exc}")

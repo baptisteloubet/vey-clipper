@@ -1029,11 +1029,16 @@ class PublicLogsTest(unittest.TestCase):
             print("Drive GET https://www.googleapis.com/drive/v3/files/1AbC?alt=media → 403")
             print("échec : Max retries exceeded with url: /refresh_access_token?grant_type=x&access_token=jeton-renouvele-456")
             print("Bearer cle-buffer-123 refusé ; montage=true ; 3 clip(s)")
+            print("[publication] 2026-11-20_note85_streamer_le-titre-du-clip_8910-1.mp4 → tiktok")
+            print("avant : " + redact.quiet("Une accroche publiée"))
             redact.uninstall()
         text = out.getvalue()
         for secret in ("instagram.com", "googleapis", "1AbC", "moncompte", "cle-buffer-123", "jeton-renouvele-456"):
             self.assertNotIn(secret, text.lower() if secret.islower() else text)
         self.assertEqual(text.count(redact.LINK_MASK), 2)
+        self.assertNotIn("le-titre-du-clip", text)             # le titre d'un clip mène au compte
+        self.assertRegex(text, r"\[publication\] clip-[0-9a-f]{8} → tiktok")
+        self.assertNotIn("Une accroche", text)
         self.assertIn("montage=true ; 3 clip(s)", text)      # le reste du journal reste lisible
 
     def test_filter_is_off_on_a_private_machine(self):
