@@ -1,0 +1,242 @@
+name: Vey Clipper
+
+# L'agent tourne ici, sans machine à laisser allumée.
+#
+# Un passage toutes les heures. La plupart sont légers (une minute : état, clips
+# validés à sortir). Quand un montage est à faire, OpenShorts est installé et lancé
+# DANS le runner, le temps du passage : mêmes réglages que sur le Mac, aucun service
+# payant. Le passage attend alors la fin du montage et dépose les clips dans Drive.
+#
+# GitHub n'exécute les planifications que depuis la branche par défaut, et rien ne
+# tourne tant que les secrets manquent (voir « Lancement automatique » dans le README).
+on:
+  schedule:
+    - cron: "17 * * * *"        # toutes les heures, nuit comprise : un live de minuit sort dans l'heure
+  workflow_dispatch:
+    inputs:
+      montage:
+        description: "Démarrer OpenShorts même si aucun montage n'est prévu (essai)"
+        type: boolean
+        default: false
+      buffer_info:
+        description: "Afficher les canaux Buffer connectés (ne publie rien)"
+        type: boolean
+        default: false
+      essai:
+        description: "Essai sans publication : chiffres Buffer et réécriture d'une légende, puis arrêt"
+        type: boolean
+        default: false
+      reset:
+        description: "Repartir de zéro : oublier montages et publications passés (l'ancien état est gardé en copie)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+concurrency:
+  group: vey-clipper
+  cancel-in-progress: false
+
+# Le jeton GitHub du passage ne sert qu'à lire le dépôt.
+permissions:
+  contents: read
+
+env:
+  # Dépôt public = journaux publics : l'agent n'y écrit ni lien, ni secret, ni nom du compte
+  # (clipper/redact.py). Les actions ci-dessous sont figées par empreinte, pas par tag.
+  CLIPPER_PUBLIC_LOGS: "1"
+  # ffmpeg : une version datée et son empreinte, pas « latest » (voir l'étape de téléchargement).
+  FFMPEG_TAG: autobuild-2026-10-31-12-59
+  FFMPEG_FILE: ffmpeg-N-128227-g4811625b5f-linux64-gpl.tar.xz
+  FFMPEG_SHA256: 67929be39bbb696f41d3295686597a439aeac902f61d82be660ccc1453c1fdfb
+  # Version d'OpenShorts installée dans le runner (celle qui tournait sur le Mac).
+  OPENSHORTS_REF: d03ba2a62919412d51f394dbf3fd694f9b2a2576
+  WAIT_MINUTES: "40"
+
+jobs:
+  tests:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests
+
+  run:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      # Les secrets ne sont donnés qu'aux étapes de l'agent, jamais au serveur OpenShorts.
+      - name: Montage à faire ?
+        id: plan
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          OPENSHORTS_API_URL: http://127.0.0.1:8000
+          FORCE_MONTAGE: ${{ inputs.montage }}
+          RESET: ${{ inputs.reset }}
+          BUFFER_INFO: ${{ inputs.buffer_info }}
+          ESSAI: ${{ inputs.essai }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          ACCOUNT_HANDLE: ${{ secrets.ACCOUNT_HANDLE }}
+        run: |
+          if [ -z "$GOOGLE_DRIVE_FOLDER_ID" ] || [ -z "$GOOGLE_OAUTH_REFRESH_TOKEN" ] || [ -z "$GEMINI_API_KEY" ]; then
+            echo "Secrets manquants : passage sauté."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$ESSAI" = "true" ]; then
+            # Lecture seule : rien n'est monté, publié ni enregistré, et le passage s'arrête là.
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            python -m clipper essai
+            exit $?
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          if [ "$BUFFER_INFO" = "true" ]; then python -m clipper buffer-info; fi
+          if [ "$RESET" = "true" ]; then python -m clipper reset; fi
+          python -m clipper plan
+          if [ "$FORCE_MONTAGE" = "true" ]; then echo "montage=true" >> "$GITHUB_OUTPUT"; fi
+
+      # ---- OpenShorts dans le runner, seulement quand un montage est à faire ----
+      - name: OpenShorts (code)
+        if: steps.plan.outputs.montage == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: mutonby/openshorts
+          ref: ${{ env.OPENSHORTS_REF }}
+          path: openshorts
+
+      - name: OpenShorts (Python 3.11)
+        if: steps.plan.outputs.montage == 'true'
+        id: py311
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          update-environment: false
+
+      - name: OpenShorts (dépendances en cache)
+        if: steps.plan.outputs.montage == 'true'
+        id: venv
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/openshorts-venv
+          key: openshorts-venv-${{ runner.os }}-${{ runner.arch }}-py${{ steps.py311.outputs.python-version }}-${{ env.OPENSHORTS_REF }}
+
+      - name: OpenShorts (installation des dépendances)
+        if: steps.plan.outputs.montage == 'true' && steps.venv.outputs.cache-hit != 'true'
+        run: |
+          "${{ steps.py311.outputs.python-path }}" -m venv ~/openshorts-venv
+          ~/openshorts-venv/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.11.0 torchvision==0.26.0
+          ~/openshorts-venv/bin/pip install --no-cache-dir --no-deps -r openshorts/requirements-cpu.lock
+
+      - name: OpenShorts (modèles en cache)
+        if: steps.plan.outputs.montage == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/huggingface
+          key: openshorts-models-${{ env.OPENSHORTS_REF }}
+
+      # ffmpeg vient d'une archive gardée en cache, pas d'apt : le 20/11, l'installation
+      # par apt a pris 20 minutes sur un passage (22 secondes au précédent).
+      - name: OpenShorts (ffmpeg en cache)
+        if: steps.plan.outputs.montage == 'true'
+        id: ffmpeg
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/ffmpeg-static
+          key: ffmpeg-btbn-${{ env.FFMPEG_TAG }}-${{ env.FFMPEG_SHA256 }}
+
+      - name: OpenShorts (téléchargement de ffmpeg)
+        if: steps.plan.outputs.montage == 'true' && steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/ffmpeg-static
+          # Archive datée, vérifiée par son empreinte avant d'être ouverte : une archive
+          # remplacée ou altérée est refusée, et l'étape suivante se rabat sur apt.
+          if curl -fsSL --retry 3 -o "$RUNNER_TEMP/ffmpeg.tar.xz" \
+               "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_TAG/$FFMPEG_FILE" \
+             && echo "$FFMPEG_SHA256  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum -c -; then
+            tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C ~/ffmpeg-static --strip-components=1
+          else
+            echo "ffmpeg : archive absente ou empreinte différente, rien n'est installé depuis l'archive"
+            rm -rf ~/ffmpeg-static   # rien à mettre en cache : le prochain montage réessaiera
+          fi
+
+      - name: OpenShorts (ffmpeg, polices, démarrage)
+        if: steps.plan.outputs.montage == 'true'
+        run: |
+          if [ -x "$HOME/ffmpeg-static/bin/ffmpeg" ] && "$HOME/ffmpeg-static/bin/ffmpeg" -version > /dev/null; then
+            echo "$HOME/ffmpeg-static/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/ffmpeg-static/bin:$PATH"
+            # Le script bin/ffmpeg d'OpenShorts appelle /usr/bin/ffmpeg par défaut :
+            # sans apt, ce chemin n'existe pas et chaque découpe échoue (exit 127).
+            export FFMPEG_REAL_BIN="$HOME/ffmpeg-static/bin/ffmpeg"
+          else
+            echo "ffmpeg en cache inutilisable : installation par apt"
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+          sudo mkdir -p /usr/local/share/fonts/openshorts
+          sudo cp openshorts/fonts/*.ttf /usr/local/share/fonts/openshorts/
+          sudo cp openshorts/fonts/openshorts-fontmap.conf /etc/fonts/conf.d/60-openshorts.conf
+          sudo fc-cache -f
+          cd openshorts
+          mkdir -p uploads output
+          export PATH="$HOME/openshorts-venv/bin:$PWD/bin:$PATH" PYTHONUNBUFFERED=1 FFMPEG_THREADS="$(nproc)"
+          nohup uvicorn app:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/openshorts.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8000/health/ready > /dev/null; then echo "OpenShorts prêt"; exit 0; fi
+            sleep 3
+          done
+          echo "OpenShorts n'a pas démarré :"
+          tail -n 80 "$RUNNER_TEMP/openshorts.log" | sed -E 's#https?://[^[:space:]"'"'"'<>]+#[lien masqué]#g'; exit 1
+
+      - name: Passage de l'agent
+        if: steps.plan.outputs.ready == 'true'
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
+          UPLOAD_POST_USER: ${{ secrets.UPLOAD_POST_USER }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          ACCOUNT_HANDLE: ${{ secrets.ACCOUNT_HANDLE }}
+          OPENSHORTS_API_URL: http://127.0.0.1:8000
+          MONTAGE: ${{ steps.plan.outputs.montage }}
+        run: |
+          if [ "$MONTAGE" = "true" ]; then
+            python -m clipper run --wait "$WAIT_MINUTES"
+          else
+            python -m clipper run
+          fi
+
+      - name: Journal d'OpenShorts
+        if: always() && steps.plan.outputs.montage == 'true'
+        run: tail -n 120 "$RUNNER_TEMP/openshorts.log" | sed -E 's#https?://[^[:space:]"'"'"'<>]+#[lien masqué]#g' || true

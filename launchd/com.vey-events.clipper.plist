@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Lance un passage de l'agent toutes les 30 minutes sur le Mac (à la place de
+  GitHub Actions, qui ne peut pas joindre OpenShorts installé en local).
+  Installation : voir « Lancement automatique » dans le README.
+  Remplacer VOTRE_NOM par le nom de la session du Mac avant de copier le fichier.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vey-events.clipper</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/VOTRE_NOM/vey-clipper</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/VOTRE_NOM/vey-clipper/.venv/bin/python</string>
+    <string>-m</string>
+    <string>clipper</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/VOTRE_NOM/.local/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PYTHONWARNINGS</key>
+    <string>ignore</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/VOTRE_NOM/vey-clipper/logs/agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/VOTRE_NOM/vey-clipper/logs/agent.log</string>
+</dict>
+</plist>

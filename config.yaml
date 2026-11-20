@@ -1,0 +1,107 @@
+# Réglages de l'agent de clipping. Aucun secret ici : les clés vont
+# dans .env (en local) ou dans les secrets GitHub (lancement automatique).
+# Tout ce qui n'est pas précisé garde sa valeur par défaut (clipper/config.py).
+
+theme:
+  name: "GTA VI"
+  hashtags: ["#gta6", "#gtavi", "#gta6fr", "#twitchfr"]   # + le hashtag du streamer, ajouté seul
+  credit_line: "🎥 {channel} en live sur {platform}"
+  # Légende : l'accroche du clip, une phrase de contexte (toutes deux écrites par l'IA
+  # pour CE clip), le streamer, le compte, les hashtags. Champs possibles : {hook}
+  # {description} {title} {credit} {channel} {login} {hashtags} {account}.
+  # {account} = nom du compte de clips, lu dans le secret ACCOUNT_HANDLE : le dépôt est public,
+  # le compte n'y est jamais nommé. Sans ce secret, la ligne qui cite {account} est retirée.
+  # L'appel à s'abonner passe avant le crédit : c'est la ligne qui fait grossir le compte.
+  caption_template: "{hook} 🌴\n\n{description}\n\n⭐ Abonne-toi à @{account} : les meilleurs moments GTA VI FR chaque jour\n{credit}\n\n{hashtags}"
+
+sources:
+  # true  = l'agent ne clippe que les chaînes listées ci-dessous (celles qui
+  #         vous ont donné leur accord) ; les autres sont remontées en « pistes ».
+  # false = l'agent clippe toute vidéo GTA VI qui performe. À vos risques :
+  #         voir « Droits » dans le README.
+  only_allowed_channels: true
+  allowed_channels:
+    # Créateurs GTA FR les plus clippés (classement YouTube 2026), logins vérifiés
+    # sur l'API Twitch le 16/11/2026. Ne garder ici que ceux qui ont donné leur accord.
+    twitch:
+      - kamet0        # Kameto
+      - aminematue    # Aminematue
+      - anyme023      # Anyme023
+      - byilhan       # Byilhan
+      - domingo       # Domingo
+      - jltomy        # JLTomy
+      - sura          # Sura
+      - lasallemqs    # LasalleMQS (ajouté le 19/11)
+    youtube: []     # @handles ou identifiants de chaîne, ex. ["@nomdelachaine"]
+                    # Chaque chaîne coûte ~200 unités de quota YouTube par recherche.
+  languages: ["fr"]
+  lookback_hours: 48
+  interval_hours: 0.75              # délai minimal entre deux recherches : une par passage (toutes les heures)
+  twitch:
+    enabled: true
+    # GTA V retiré le 18/11 : les montages restent libres pour le lancement de minuit.
+    game_names: ["Grand Theft Auto VI"]
+    min_clip_views: 200
+    # Depuis le 20/11 : on sort vite les lives du moment. Les vues d'un live comptent
+    # moitié moins toutes les 6 h, et un live clippé il y a moins de 3 h est monté
+    # même si le stock est plein (dans la limite de max_sources_per_day).
+    half_life_hours: 6
+    fresh_hours: 3
+  youtube:
+    enabled: false                  # coupé pendant le lancement : tout se passe en direct sur Twitch
+    queries: ["GTA 6", "GTA VI"]
+    min_views: 20000
+    min_minutes: 8
+    max_minutes: 90
+
+# Depuis le 20/11 : peu de clips, mais relus et travaillés (3 à 5 par jour), au lieu
+# des 30 par jour du lancement. Un montage rend 4 clips, on n'en garde que les 3 mieux notés.
+clipping:
+  max_sources_per_day: 3            # (15 pendant le lancement)
+  max_jobs_in_flight: 1             # un montage à la fois : il tourne dans le passage GitHub Actions
+  max_minutes_per_source: 8          # Twitch : 8 min des meilleurs clips, recollés
+  max_upload_mb: 500                # OpenShorts auto-hébergé : pas de limite à 50 Mo comme en ligne
+  target_clips: 4
+  keep_best: 3                      # les 3 mieux notés par l'IA arrivent dans « À valider »
+  # Depuis le 20/11 : plus de relecture, donc un seuil. Sous 80, un clip n'est pas publié
+  # (le premier montage du jour a donné 85, 82 et 78). À ajuster d'après `python -m clipper stats`.
+  min_score: 80
+  # Clips courts tant que le compte grossit : la monétisation TikTok (vidéos d'une minute
+  # au moins) demande d'abord 10 000 abonnés. Repasser à 61-90 une fois ce seuil atteint.
+  clip_min_seconds: 20
+  clip_max_seconds: 45
+  auto_hook: true                   # accroche incrustée en ouverture du clip
+  hook_style: "pill"                # pill | classic | dark | yellow | red
+  # Mise en page : « auto » laisse l'IA choisir, « screencast » l'autorise à empiler
+  # le jeu et la facecam du streamer au lieu d'un simple fond flouté.
+  layouts: ["auto", "screencast"]
+  # Légende réécrite pour le compte : 3e personne, streamer et GTA VI nommés, contexte tiré
+  # des paroles du clip (le montage écrit « J'ai ruiné ma partie », comme si le compte était
+  # le streamer). L'accroche incrustée dans la vidéo, elle, reste celle du montage.
+  rewrite_captions: true
+
+# Mesure : vues, réactions et abonnés gagnés de chaque clip, lus dans Buffer deux fois par
+# jour pendant 7 jours. Relevé complet : `_agent/stats-clips.csv` dans Drive ; synthèse par
+# streamer, durée et note : `python -m clipper stats`.
+stats:
+  enabled: true
+  refresh_hours: 12
+  track_days: 7
+
+publishing:
+  # Instagram, TikTok et YouTube Shorts : publiés automatiquement par Buffer (offre gratuite, clé BUFFER_API_KEY).
+  # Les comptes doivent être connectés dans Buffer ; l'agent retrouve leurs canaux tout seul.
+  # Upload-Post (10 envois gratuits par mois, épuisés le 18/11) n'est plus utilisé.
+  platforms: ["instagram", "tiktok", "youtube"]   # YouTube = Shorts (canal ajouté à Buffer le 20/11)
+  min_per_day: 3                    # objectif : 3 clips par jour (30 pendant le lancement)
+  stock_days: 1                     # 1 jour de clips d'avance : on veut du frais, pas du stock
+  max_per_day: 5
+  max_per_run: 1                    # un clip par passage : les publications s'étalent sur la journée
+  manual_platforms: []              # réseaux postés à la main : chaque clip publié est copié dans « 5 - À poster »
+  auto_approve: true                # depuis le 20/11 : chaque clip monté est publié sans relecture.
+                                    # false = rien ne sort sans avoir été déplacé à la main dans « 2 - Validé ».
+  tiktok_post_mode: "MEDIA_UPLOAD"  # arrive en brouillon dans l'app TikTok ; DIRECT_POST pour publier directement
+
+storage:
+  kind: drive                       # "local" pour essayer sans Google Drive (dossier data/drive)
+  # Noms des dossiers Drive : voir « Dossiers Google Drive » dans le README (défauts dans clipper/config.py).
