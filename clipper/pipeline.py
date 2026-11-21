@@ -224,6 +224,7 @@ class Agent:
                 self.storage.move(clip, "review", "approved")
                 self.log(f"[publication] {clip.name} validé automatiquement")
         self.copy_for_manual()  # retente les copies restées en échec
+        self.expire_stale()
         approved = self.storage.list_clips("approved")
         # Garde-fou : on ne publie que les clips d'un jeu du thème (GTA VI).
         games = {g.lower() for g in self.cfg["sources"]["twitch"]["game_names"]}
@@ -285,6 +286,36 @@ class Agent:
             count += 1
         self.copy_for_manual()
         return count
+
+    def _clip_age_hours(self, name):
+        """Âge d'un clip (depuis le live d'origine) ; None s'il n'est pas suivi par l'agent."""
+        info = self.state["clips"].get(name)
+        if info is None:
+            return None   # déposé à la main : jamais périmé
+        source = self.state["sources"].get(info.get("source"), {})
+        when = source.get("fresh_at") or source.get("submitted_at") or info.get("added_at")
+        return discovery.age_hours(when, self.now) if when else None
+
+    def _is_stale(self, clip):
+        limit = self.cfg["publishing"].get("max_age_hours") or 0
+        age = self._clip_age_hours(clip.name)
+        return bool(limit) and age is not None and age > limit
+
+    def expire_stale(self):
+        """Clips trop vieux pour être publiés (`max_age_hours`) : rangés dans « Refusé ».
+
+        On veut du frais : un clip d'un live d'hier ne doit ni sortir, ni compter dans le
+        stock et retenir les montages des lives du moment.
+        """
+        expired = 0
+        for folder in ("review", "approved"):
+            for clip in self.storage.list_clips(folder):
+                if self._is_stale(clip):
+                    self.storage.move(clip, folder, "rejected")
+                    self.log(f"[publication] {clip.name} périmé "
+                             f"({self._clip_age_hours(clip.name):.0f} h après le live), non publié")
+                    expired += 1
+        return expired
 
     def _freshness_key(self, clip):
         """Date du live d'origine (dernier clip Twitch), à défaut celle du dépôt dans Drive."""
@@ -352,13 +383,23 @@ class Agent:
         return read
 
     # -------------------------------------------------------------- découverte
-    def _montage_caps(self):
-        """Montages encore permis maintenant (moteur et plafond du jour), stock mis à part."""
+    def _montage_caps(self, fresh=False):
+        """Montages encore permis maintenant (moteur et plafond du jour), stock mis à part.
+
+        `fresh=True` : plafond d'un live du moment, qui a en plus ses propres montages
+        (`fresh_extra_sources_per_day`) : les montages d'hier ne le bloquent pas.
+        """
         clipping, sources = self.cfg["clipping"], self.state["sources"]
         in_flight = sum(1 for s in sources.values() if s["status"] == "submitted")
         today = sum(1 for s in sources.values()
                     if s.get("submitted_at") and _since(s["submitted_at"], self.now) < timedelta(hours=24))
-        return min(clipping["max_jobs_in_flight"] - in_flight, clipping["max_sources_per_day"] - today)
+        daily = clipping["max_sources_per_day"]
+        if fresh:
+            daily += clipping.get("fresh_extra_sources_per_day") or 0
+        return min(clipping["max_jobs_in_flight"] - in_flight, daily - today)
+
+    def _can_montage(self):
+        return max(self._montage_caps(), self._montage_caps(fresh=True)) > 0
 
     def _is_fresh(self, cand):
         """Live tout juste clippé : il passe devant le stock pour sortir vite."""
@@ -374,7 +415,8 @@ class Agent:
         # On ne monte que ce qu'il faut : garder d'avance `stock_days` jours de
         # clips (à valider + validés + montages en cours) pour tenir l'objectif.
         per_source = self._clips_per_source()
-        stock = (len(self.storage.list_clips("review")) + len(self.storage.list_clips("approved"))
+        stock = (sum(1 for f in ("review", "approved") for c in self.storage.list_clips(f)
+                     if not self._is_stale(c))
                  + in_flight * per_source)
         missing = pub["min_per_day"] * pub["stock_days"] - stock
         need = -(-missing // per_source) if missing > 0 else 0
@@ -392,7 +434,7 @@ class Agent:
         """
         if any(s["status"] == "submitted" for s in self.state["sources"].values()):
             return True
-        if self._montage_caps() <= 0 or not self._discovery_due():
+        if not self._can_montage() or not self._discovery_due():
             return False
         return bool(self.discover_and_submit(dry_run=True))
 
@@ -403,7 +445,7 @@ class Agent:
             # Chaque recherche consomme du quota (YouTube : 10 000 unités/jour,
             # 100 par requête) : on ne cherche que si un montage est permis,
             # et pas plus d'une fois par `interval_hours`.
-            if self._montage_caps() <= 0 or not self._discovery_due():
+            if not self._can_montage() or not self._discovery_due():
                 return 0
             self.state["last_discovery"] = self.now.isoformat()
 
@@ -421,9 +463,10 @@ class Agent:
         # Pistes : chaînes qui marchent mais non autorisées → à contacter.
         self.state["leads"] = [c.to_dict() for c in fresh if c not in eligible][:20]
         if budget <= 0:
-            # Stock plein : seuls les lives tout juste clippés passent, pour sortir vite.
+            # Stock plein ou montages du jour épuisés : seuls les lives tout juste clippés
+            # passent, avec leur propre plafond, pour sortir vite.
             eligible = [c for c in eligible if self._is_fresh(c)]
-            budget = self._montage_caps()
+            budget = self._montage_caps(fresh=True)
         if dry_run:
             return eligible
 

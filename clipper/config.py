@@ -48,6 +48,9 @@ DEFAULTS = {
     },
     "clipping": {
         "max_sources_per_day": 4,
+        # Montages en plus, réservés aux lives du moment (`twitch.fresh_hours`) : un live
+        # de 21 h est monté même si les montages du jour sont déjà faits.
+        "fresh_extra_sources_per_day": 0,
         "max_jobs_in_flight": 2,
         "max_minutes_per_source": 30,    # Twitch : durée max des clips recollés envoyés au montage
         "max_upload_mb": 45,             # taille max du fichier envoyé (OpenShorts cloud : ~50 Mo)
@@ -79,6 +82,9 @@ DEFAULTS = {
         "stock_days": 2,                 # jours de clips gardés d'avance pour le tenir
         "max_per_day": 6,
         "max_per_run": 1,
+        # Âge maximal d'un clip, compté depuis le live d'origine : au-delà, il est rangé
+        # dans « Refusé » sans être publié et ne compte plus dans le stock (0 = jamais).
+        "max_age_hours": 0,
         "tiktok_post_mode": "MEDIA_UPLOAD",  # brouillon dans l'app ; DIRECT_POST = publication directe
         # Plateformes postées à la main : chaque clip publié est aussi copié dans
         # le dossier « manual » (avec sa légende) pour être posté depuis le téléphone.

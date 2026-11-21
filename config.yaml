@@ -58,6 +58,8 @@ sources:
 # des 30 par jour du lancement. Un montage rend 4 clips, on n'en garde que les 3 mieux notés.
 clipping:
   max_sources_per_day: 3            # (15 pendant le lancement)
+  fresh_extra_sources_per_day: 3    # depuis le 21/11 : 3 montages de plus par 24 h, réservés aux lives
+                                    # de moins de `fresh_hours` (un live de 21 h sort vers 22 h)
   max_jobs_in_flight: 1             # un montage à la fois : il tourne dans le passage GitHub Actions
   max_minutes_per_source: 8          # Twitch : 8 min des meilleurs clips, recollés
   max_upload_mb: 500                # OpenShorts auto-hébergé : pas de limite à 50 Mo comme en ligne
@@ -97,6 +99,8 @@ publishing:
   stock_days: 1                     # 1 jour de clips d'avance : on veut du frais, pas du stock
   max_per_day: 5
   max_per_run: 1                    # un clip par passage : les publications s'étalent sur la journée
+  max_age_hours: 12                 # depuis le 21/11 : un clip plus vieux que 12 h après le live est rangé
+                                    # dans « Refusé » sans être publié, et ne retient plus les montages
   manual_platforms: []              # réseaux postés à la main : chaque clip publié est copié dans « 5 - À poster »
   auto_approve: true                # depuis le 20/11 : chaque clip monté est publié sans relecture.
                                     # false = rien ne sort sans avoir été déplacé à la main dans « 2 - Validé ».

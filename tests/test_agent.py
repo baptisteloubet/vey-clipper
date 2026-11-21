@@ -106,6 +106,59 @@ class AgentTest(unittest.TestCase):
         self.found = [old]
         self.assertFalse(self.agent().needs_engine())
 
+    def test_fresh_live_is_montaged_even_when_the_daily_montages_are_used(self):
+        # Montages du jour faits hier soir : un live de ce soir passe quand même.
+        self.cfg["sources"]["twitch"]["fresh_hours"] = 3
+        self.cfg["clipping"].update(max_jobs_in_flight=1, max_sources_per_day=1,
+                                    fresh_extra_sources_per_day=2)
+        agent = self.agent()
+        agent.state["sources"]["twitch:old"] = {"status": "done", "submitted_at": (NOW - timedelta(hours=2)).isoformat()}
+        agent.save()
+        old, new = cand(1), cand(2)
+        old.fresh_at = (NOW - timedelta(hours=20)).isoformat()
+        new.fresh_at = (NOW - timedelta(minutes=40)).isoformat()
+        self.found = [old, new]
+        agent = self.agent()
+        self.assertTrue(agent.needs_engine())
+        agent.discover_and_submit()
+        self.assertEqual([c.video_id for c in self.engine.submitted], ["v2"])
+
+    def test_stale_live_waits_when_the_daily_montages_are_used(self):
+        self.cfg["sources"]["twitch"]["fresh_hours"] = 3
+        self.cfg["clipping"].update(max_sources_per_day=1, fresh_extra_sources_per_day=2)
+        agent = self.agent()
+        agent.state["sources"]["twitch:old"] = {"status": "done", "submitted_at": (NOW - timedelta(hours=2)).isoformat()}
+        agent.save()
+        old = cand(1)
+        old.fresh_at = (NOW - timedelta(hours=20)).isoformat()
+        self.found = [old]
+        self.assertFalse(self.agent().needs_engine())
+
+    def test_stale_clips_expire_and_free_the_stock(self):
+        self.cfg["sources"]["twitch"]["fresh_hours"] = 3
+        self.cfg["publishing"].update(stock_days=1, max_age_hours=12)
+        agent = self.agent()
+        agent.state["sources"]["twitch:old"] = {"status": "done", "fresh_at": (NOW - timedelta(hours=20)).isoformat(),
+                                                "submitted_at": (NOW - timedelta(hours=19)).isoformat()}
+        for i in range(3):  # 3 clips validés d'un live d'hier
+            path = os.path.join(self.tmp.name, f"c{i}.mp4")
+            open(path, "wb").close()
+            self.storage.put_clip(path, f"old{i}.mp4", "", "approved")
+            agent.state["clips"][f"old{i}.mp4"] = {"source": "twitch:old", "added_at": (NOW - timedelta(hours=18)).isoformat()}
+        path = os.path.join(self.tmp.name, "hand.mp4")
+        open(path, "wb").close()
+        self.storage.put_clip(path, "a-la-main.mp4", "", "approved")   # déposé à la main : jamais périmé
+        agent.save()
+        old = cand(1)
+        old.fresh_at = (NOW - timedelta(hours=20)).isoformat()
+        self.found = [old]
+        agent = self.agent()
+        self.assertTrue(agent.needs_engine())   # le stock périmé ne compte plus
+        agent.run()
+        self.assertEqual([c.name for c in self.storage.list_clips("rejected")], ["old0.mp4", "old1.mp4", "old2.mp4"])
+        self.assertEqual([p[0] for p in self.publisher.posts], ["a-la-main.mp4"])
+        self.assertEqual([c.video_id for c in self.engine.submitted], ["v1"])
+
     def test_freshness_halves_views_every_half_life(self):
         tw = {"half_life_hours": 6}
         self.assertAlmostEqual(discovery.freshness((NOW - timedelta(hours=12)).isoformat(), NOW, tw), 0.25)
